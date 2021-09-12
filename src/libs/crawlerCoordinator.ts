@@ -1,15 +1,17 @@
-//0815
-//url리스트 관리 및 크롤러의 요청을 생성
-//프로그램 메인
-//
+import { Browser } from "./browser";
 import { Crawler } from "./crawler";
 
 export class CrawlerCoordinator {
-  //url리스트는 '큐'로 관리 -> why? 성능을 끌어올리고자
   private urlQueue: string[];
+  private browser: Browser;
 
   public constructor() {
     this.urlQueue = [];
+    this.browser = new Browser();
+  }
+
+  public getBrowser(): Browser {
+    return this.browser;
   }
 
   public reportUrl(url: string): void {

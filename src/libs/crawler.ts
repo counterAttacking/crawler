@@ -1,12 +1,21 @@
-import axios, { AxiosError } from "axios";
 import parse from "node-html-parser";
+import chardet from "chardet";
+import { KMR } from "koalanlp/API";
+import { Tagger } from "koalanlp/proc";
 import { CrawlerCoordinator } from "./crawlerCoordinator";
+import { Keyword } from "../models/Keyword";
+import { Link } from "../models/Link";
+import { KeywordLink } from "../models/KeywordLink";
+//import { initialize } from "koalanlp/Util";
+//import axios, { AxiosError } from "axios";
+//import iconv from "iconv-lite";
 
 export class Crawler {
   private url: string;
   private content?: string;
   private coordinator: CrawlerCoordinator;
-  private host?: string; //도메인(http://www.naver.com)
+  private host?: string;
+  //private encoding?: string;
 
   public constructor(url: string, coordinator: CrawlerCoordinator) {
     this.url = url;
@@ -17,20 +26,23 @@ export class Crawler {
   //2)어느서버에 접속했을떄 응답이 없을경우, =>3000(3s) 있다가 다음 사항에 응답
   //3) data에는 string 타입으로 html이 들어옴
   private async fetch(): Promise<string | null> {
-    try {
-      const { data, request } = await axios.get(this.url, {
-        timeout: 3030,
-      });
+    const browser = await this.coordinator.getBrowser().getInstance();
+    if (!browser) {
+      return null;
+    }
+    const page = await browser.newPage();
+    await page.goto(this.url);
+    const result = await page.content();
 
-      this.host = request.host; //호스트 담아줌
-      return data;
-    } catch (error) {
-      if (error.isAxiosError) {
-        const e: AxiosError = error;
-        console.error(e.response?.status); //에러가 있다면 status를 넘겨주어라.
-      }
+    if (result) {
+      this.content = result;
+      return this.content;
     }
     return null;
+  }
+
+  private detectEncoding(data: Buffer): string | null {
+    return chardet.detect(data);
   }
 
   /*반환값이 Promise의 void타입으로 되어있음  */
@@ -53,7 +65,7 @@ export class Crawler {
       return;
     }
 
-    const html = parse(this.content);
+    const html = parse(this.content).querySelector("body");
     const anchors = html.querySelectorAll("a");
 
     anchors.forEach((anchor) => {
@@ -78,10 +90,13 @@ export class Crawler {
       } else if (!href.startsWith("http")) {
         url = this.host + "/" + url;
       }
-
-      // this.coordinator.reportUrl(url);
+      //this.coordinator.reportUrl(url);
     });
-    console.log(html.text.replace(/\s{2,}/g, " "));
+
+    html.querySelectorAll("script").forEach((script) => script.remove());
+
+    const text = html.text.replace(/\s{2,}/g, " ");
+    await this.parseKeywords(text);
 
     // //1. anchor태그 ->
     // // '/gi' (gi는 전체를 뜻함 -> 곧 List로 가져와야 한다 => 반복문으로 돌려야 한다)
@@ -128,5 +143,75 @@ export class Crawler {
 
     //   this.coordinator.reportUrl(url);
     //});
+  }
+  private async parseKeywords(text: string) {
+    const tagger = new Tagger(KMR);
+    const tagged = await tagger(text);
+    const newKeywords: Set<string> = new Set();
+    const existKeywords: Keyword[] = [];
+    for (const sent of tagged) {
+      for (const word of sent._items) {
+        for (const morpheme of word._items) {
+          if (
+            morpheme._tag === "NNG" ||
+            morpheme._tag === "NNP" ||
+            morpheme._tag === "NNB" ||
+            morpheme._tag === "NP" ||
+            morpheme._tag === "NR" ||
+            morpheme._tag === "VV" ||
+            morpheme._tag === "SL"
+          ) {
+            /* try {
+            await Keyword.create({
+              name: morpheme._surface,
+            });
+          } catch (e) {
+            console.error("duplicated or error occurred", e);
+          } */
+            const keyword = morpheme._surface.toLowerCase();
+            const exist = await Keyword.findOne({
+              where: {
+                name: keyword,
+              },
+            });
+
+            if (!exist) {
+              newKeywords.add(keyword);
+            } else {
+              existKeywords.push(exist);
+            }
+          }
+        }
+      }
+    }
+    let newLink;
+    if (newKeywords.size > 0) {
+      const keywords = Array.from(newKeywords).map((keyword) => {
+        return { name: keyword };
+      });
+
+      newLink = await Link.create(
+        {
+          url: this.url,
+          description: text.slice(0, 512),
+          keywords: keywords,
+        },
+        {
+          include: [Keyword],
+        }
+      );
+    }
+    if (newLink) {
+      const addedIds: Set<bigint> = new Set();
+      for (const keyword of existKeywords) {
+        if (!addedIds.has(keyword.id)) {
+          await KeywordLink.create({
+            keywordId: keyword.id,
+            linkId: newLink.id,
+          });
+          addedIds.add(keyword.id);
+        }
+      }
+    }
   }
 }
