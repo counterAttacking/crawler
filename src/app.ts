@@ -1,6 +1,6 @@
 import { initialize } from "koalanlp/Util";
 import { CrawlerCoordinator } from "./libs/crawlerCoordinator";
-import database from "./conifg/database";
+import database from "./config/database";
 
 (async () => {
   database.sync({
