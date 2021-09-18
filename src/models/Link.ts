@@ -1,3 +1,5 @@
+// Uniform Resource Locator(URL)과 거기에 있는 대표 문자열들을 추출하여 저장
+
 import {
   AutoIncrement,
   BelongsToMany,

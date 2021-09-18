@@ -1,3 +1,4 @@
+import axios, { AxiosError } from "axios";
 import parse from "node-html-parser";
 import chardet from "chardet";
 import { KMR } from "koalanlp/API";
@@ -6,16 +7,12 @@ import { CrawlerCoordinator } from "./crawlerCoordinator";
 import { Keyword } from "../models/Keyword";
 import { Link } from "../models/Link";
 import { KeywordLink } from "../models/KeywordLink";
-//import { initialize } from "koalanlp/Util";
-//import axios, { AxiosError } from "axios";
-//import iconv from "iconv-lite";
 
 export class Crawler {
   private url: string;
   private content?: string;
   private coordinator: CrawlerCoordinator;
-  private host?: string;
-  //private encoding?: string;
+  private host?: string; //도메인(http://www.naver.com)
 
   public constructor(url: string, coordinator: CrawlerCoordinator) {
     this.url = url;
@@ -38,6 +35,7 @@ export class Crawler {
       this.content = result;
       return this.content;
     }
+
     return null;
   }
 
@@ -59,7 +57,6 @@ export class Crawler {
 
   //1. 크롤링에서 결과로 받은 content(.html)에서 anchor태그 모두 찾아냄 ->url패턴을 찾아내기
   //2. 이후 anchor태그에서 url리스트 추출하기
-
   private async parseContent(): Promise<void> {
     if (!this.content) {
       return;
@@ -90,6 +87,7 @@ export class Crawler {
       } else if (!href.startsWith("http")) {
         url = this.host + "/" + url;
       }
+
       //this.coordinator.reportUrl(url);
     });
 
@@ -144,37 +142,42 @@ export class Crawler {
     //   this.coordinator.reportUrl(url);
     //});
   }
+
   private async parseKeywords(text: string) {
     const tagger = new Tagger(KMR);
     const tagged = await tagger(text);
     const newKeywords: Set<string> = new Set();
     const existKeywords: Keyword[] = [];
+
     for (const sent of tagged) {
       for (const word of sent._items) {
         for (const morpheme of word._items) {
-          if (
-            morpheme._tag === "NNG" ||
-            morpheme._tag === "NNP" ||
-            morpheme._tag === "NNB" ||
-            morpheme._tag === "NP" ||
-            morpheme._tag === "NR" ||
-            morpheme._tag === "VV" ||
-            morpheme._tag === "SL"
-          ) {
-            /* try {
+          if (morpheme._tag === "NNG" || morpheme._tag === "NNP" ||
+            morpheme._tag === "NNB" || morpheme._tag === "NP" || morpheme._tag === "NR" ||
+            morpheme._tag === "VV" || morpheme._tag === "SL") {
+            console.log(morpheme.toString());
+          }
+
+          /*try {
             await Keyword.create({
               name: morpheme._surface,
             });
           } catch (e) {
-            console.error("duplicated or error occurred", e);
-          } */
+            console.error("duplicated or error occurrer", e);
+          }*/
+
+          {
             const keyword = morpheme._surface.toLowerCase();
+            // findAll(), findOne()은 객체를 전달하는 방식으로 사용
             const exist = await Keyword.findOne({
+              // where절은 일반적으로 And 연산
+              // {name:"name",age:15} : name이 name이고 age가 15인 조건
               where: {
-                name: keyword,
+                name: morpheme._surface
               },
             });
 
+            // 중복되는 keyword가 Keyword Table에 존재하지 않도록
             if (!exist) {
               newKeywords.add(keyword);
             } else {
@@ -184,32 +187,43 @@ export class Crawler {
         }
       }
     }
-    let newLink;
-    if (newKeywords.size > 0) {
-      const keywords = Array.from(newKeywords).map((keyword) => {
-        return { name: keyword };
-      });
 
-      newLink = await Link.create(
-        {
-          url: this.url,
-          description: text.slice(0, 512),
-          keywords: keywords,
-        },
-        {
-          include: [Keyword],
-        }
-      );
-    }
-    if (newLink) {
-      const addedIds: Set<bigint> = new Set();
-      for (const keyword of existKeywords) {
-        if (!addedIds.has(keyword.id)) {
-          await KeywordLink.create({
-            keywordId: keyword.id,
-            linkId: newLink.id,
-          });
-          addedIds.add(keyword.id);
+    const isURLExist = await Link.findOne({
+      where: {
+        url: this.url,
+      },
+    });
+    if (!isURLExist) {
+      // Links Table 생성
+      let newLink;
+      if (newKeywords.size > 0) {
+        const keywords = Array.from(newKeywords).map((keyword) => {
+          return { name: keyword };
+        });
+
+        newLink = await Link.create(
+          {
+            url: this.url,
+            description: text.slice(0, 512),
+            keywords: keywords
+          },
+          {
+            include: [Keyword],
+          }
+        );
+      }
+
+      // Keywordlinks Table 생성
+      if (newLink) {
+        const addedIds: Set<bigint> = new Set();
+        for (const keyword of existKeywords) {
+          if (!addedIds.has(keyword.id)) {
+            await KeywordLink.create({
+              keywordId: keyword.id,
+              linkId: newLink.id,
+            });
+            addedIds.add(keyword.id);
+          }
         }
       }
     }

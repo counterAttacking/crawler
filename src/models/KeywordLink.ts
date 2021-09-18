@@ -1,7 +1,8 @@
+// Keyword와 Link의 연결고리 테이블
+
 import {
   AutoIncrement,
   Column,
-  DataType,
   ForeignKey,
   Model,
   PrimaryKey,

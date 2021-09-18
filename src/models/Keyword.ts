@@ -1,3 +1,5 @@
+// 형태소 분석으로 만들어진 키워드들 저장
+
 import {
   AutoIncrement,
   BelongsToMany,
