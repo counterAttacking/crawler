@@ -1,4 +1,3 @@
-import axios, { AxiosError } from "axios";
 import parse from "node-html-parser";
 import chardet from "chardet";
 import { KMR } from "koalanlp/API";
@@ -188,43 +187,67 @@ export class Crawler {
       }
     }
 
-    const isURLExist = await Link.findOne({
+    // Links Table에 같은 URL을 가지는 것이 있는지 탐색
+    const existLink = await Link.findOne({
       where: {
         url: this.url,
       },
     });
-    if (!isURLExist) {
-      // Links Table 생성
-      let newLink;
-      if (newKeywords.size > 0) {
-        const keywords = Array.from(newKeywords).map((keyword) => {
-          return { name: keyword };
-        });
 
-        newLink = await Link.create(
-          {
-            url: this.url,
-            description: text.slice(0, 512),
-            keywords: keywords
-          },
-          {
-            include: [Keyword],
-          }
-        );
-      }
+    let newLink;
+    // 새로 추가될 수 있는 Keyword들을 추출
+    const keywords = Array.from(newKeywords).map((keyword) => {
+      return { name: keyword };
+    });
 
-      // Keywordlinks Table 생성
-      if (newLink) {
-        const addedIds: Set<bigint> = new Set();
-        for (const keyword of existKeywords) {
-          if (!addedIds.has(keyword.id)) {
-            await KeywordLink.create({
-              keywordId: keyword.id,
-              linkId: newLink.id,
-            });
-            addedIds.add(keyword.id);
-          }
+
+    // Links Table에 같은 URL이 없는 경우
+    if (!existLink) {
+      // Links Table에 새 URL을 가지는 데이터 추가
+      newLink = await Link.create(
+        {
+          url: this.url,
+          description: text.slice(0, 512),
+          keywords: keywords
+        },
+        {
+          include: [Keyword],
         }
+      );
+    } else {
+      // Keywords Table에 새로운 keyword data를 직접 생성하여 추가
+      for (const keyword of keywords) {
+        const newKeyword = await Keyword.create(keyword);
+        // keywordId는 새로 추가되는 것으로
+        // linkId는 기존에 존재하는 Links Table의 data의 id로
+        await KeywordLink.create({
+          keywordId: newKeyword.id,
+          linkId: existLink.id,
+        });
+      }
+    }
+
+    // linkId는 Links Table에 이미 존재하는 data의 id 혹은 새로 만들어진 data의 id
+    const linkId = existLink ? existLink.id : newLink.id;
+    // Keyword가 중복되어 생성되지 않도록 관리
+    const addedIds: Set<bigint> = new Set();
+    for (const keyword of existKeywords) {
+      // KeywordLinks Table에 keyword가 해당 URL과 관계를 맺은 경우가 있는지 파악
+      const existRelation = await KeywordLink.findOne({
+        where: {
+          linkId: linkId,
+          keywordId: keyword.id,
+        },
+      });
+
+      // KeywordLinks Table에 관계 형성이 되어 있지 않고
+      // 중복된 data가 아닌 경우 KeywordLinks Table에 data 추가
+      if (!existRelation && !addedIds.has(keyword.id)) {
+        await KeywordLink.create({
+          keywordId: keyword.id,
+          linkId: linkId,
+        });
+        addedIds.add(keyword.id);
       }
     }
   }
